@@ -155,21 +155,116 @@ class CatalogService:
         downstream_id: str,
         columns: list[dict] | None = None,
     ) -> bool:
-        """Register a lineage edge. Idempotent; cycles are rejected."""
+        """Register column lineage for a table pair, in batches.
+
+        Semantics:
+
+        - the pair is always a *single* edge: repeated registrations merge
+          their column mappings (union, deduplicated), so batch 1 and batch 2
+          together yield the complete mapping set;
+        - returns True iff this call actually added something (a new pair or
+          previously unknown mappings); an exact replay or a batch with no
+          new mappings returns False and changes no state;
+        - a brand-new pair is rejected if it would close a cycle; adding
+          mappings to an existing pair cannot create one;
+        - all validation runs before any write, so a rejected batch applies
+          nothing (all-or-nothing).
+        """
         try:
             upstream = self._visible_entity(actor, upstream_id)
             downstream = self._visible_entity(actor, downstream_id)
-            mappings = self._parse_column_mappings(columns or [], upstream, downstream)
-            edge = LineageEdge(upstream_id, downstream_id, mappings)
-            added = self.store.add_edge_guarded(
-                edge, lambda existing: assert_no_cycle(existing, edge)
+            mappings = frozenset(self._parse_column_mappings(columns or [], upstream, downstream))
+            edge = LineageEdge(upstream_id, downstream_id, tuple(mappings))
+            added, _all = self.store.merge_lineage(
+                upstream_id,
+                downstream_id,
+                mappings,
+                guard=lambda existing: assert_no_cycle(existing, edge),
             )
         except CatalogError as e:
             self.audit.record(actor.name, "register_lineage", f"{upstream_id}->{downstream_id}", "rejected", f"{e.code}: {e.message}")
             raise
         outcome = "success" if added else "success (idempotent replay)"
-        self.audit.record(actor.name, "register_lineage", f"{upstream_id}->{downstream_id}", outcome)
+        self.audit.record(actor.name, "register_lineage", f"{upstream_id}->{downstream_id}", outcome, f"added_mappings={added} total_mappings={len(_all)}")
         return added
+
+    def deregister_lineage(
+        self,
+        actor: Principal,
+        upstream_id: str,
+        downstream_id: str,
+        columns: list[dict] | None = None,
+    ) -> bool:
+        """Take registered lineage offline.
+
+        With ``columns=None`` the whole edge (table- and column-level) is
+        revoked. Otherwise only the given column mappings are revoked; when
+        the last mapping of a column-level edge goes, the edge disappears as
+        well. Both lineage queries and impact analysis converge to the new
+        state immediately.
+
+        Idempotent: revoking something that is already absent is a successful
+        no-op returning False, never an error. Every attempt is audited,
+        including no-ops, so who revoked what and when is traceable. A
+        subsequent re-registration starts from a clean state.
+
+        Malformed requests are rejected as validation errors; mappings that
+        merely reference fields no longer present in a schema are treated as
+        already absent (idempotent no-op), not as failures.
+        """
+        try:
+            upstream = self._visible_entity(actor, upstream_id)
+            downstream = self._visible_entity(actor, downstream_id)
+            if columns is None:
+                mappings: frozenset[ColumnMapping] | None = None
+                scope = "edge"
+            else:
+                selected = self._parse_column_revocations(columns)
+                live_up = {f.name for f in (upstream.current_schema.fields if upstream.current_schema else ())}
+                live_down = {f.name for f in (downstream.current_schema.fields if downstream.current_schema else ())}
+                # references to fields that no longer exist are simply absent
+                mappings = frozenset(
+                    m for m in selected if m.upstream in live_up and m.downstream in live_down
+                )
+                scope = f"mappings={sorted((m.upstream, m.downstream) for m in mappings)}"
+            removed, edge_exists = self.store.remove_lineage(
+                upstream_id, downstream_id, mappings
+            )
+        except CatalogError as e:
+            self.audit.record(actor.name, "deregister_lineage", f"{upstream_id}->{downstream_id}", "rejected", f"{e.code}: {e.message}")
+            raise
+        if removed:
+            outcome = "success"
+        else:
+            outcome = "success (idempotent no-op)"
+        self.audit.record(
+            actor.name,
+            "deregister_lineage",
+            f"{upstream_id}->{downstream_id}",
+            outcome,
+            f"scope={scope} removed={removed} edge_remains={edge_exists}",
+        )
+        return removed
+
+    def _parse_column_revocations(
+        self, raw: list[dict]
+    ) -> frozenset[ColumnMapping]:
+        """Parse a non-empty de-duplicated list of column references.
+
+        Only structural validity is enforced here; whether the referenced
+        fields or mappings still exist is handled idempotently downstream.
+        """
+        if not isinstance(raw, list) or not raw:
+            raise ValidationError("columns must be a non-empty list")
+        selected: set[ColumnMapping] = set()
+        for i, item in enumerate(raw):
+            if not isinstance(item, dict):
+                raise ValidationError(f"columns[{i}] must be an object")
+            up, down = item.get("upstream"), item.get("downstream")
+            if not isinstance(up, str) or not isinstance(down, str) or not up or not down:
+                raise ValidationError(f"columns[{i}] needs non-empty 'upstream' and 'downstream'")
+            selected.add(ColumnMapping(up, down))
+        return frozenset(selected)
 
     def _parse_column_mappings(
         self, raw: list[dict], upstream: DataEntity, downstream: DataEntity

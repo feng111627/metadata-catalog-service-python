@@ -50,6 +50,14 @@ class RegisterLineageRequest(BaseModel):
     columns: list[dict[str, Any]] | None = None
 
 
+class DeregisterLineageRequest(BaseModel):
+    upstream_id: str
+    downstream_id: str
+    # omit / null  -> revoke the whole edge;
+    # a list       -> revoke only the named column mappings
+    columns: list[dict[str, Any]] | None = None
+
+
 class ImpactRequest(BaseModel):
     columns: list[str] | None = None
 
@@ -157,6 +165,17 @@ def create_app(service: CatalogService | None = None) -> FastAPI:
             principal, body.upstream_id, body.downstream_id, body.columns
         )
         return {"added": added}
+
+    @app.post("/lineage/deregister")
+    def deregister_lineage(
+        body: DeregisterLineageRequest,
+        principal: Principal = Depends(get_principal),
+        svc: CatalogService = Depends(get_service),
+    ) -> dict[str, Any]:
+        removed = svc.deregister_lineage(
+            principal, body.upstream_id, body.downstream_id, body.columns
+        )
+        return {"removed": removed}
 
     @app.get("/entities/{entity_id}/lineage")
     def get_lineage(

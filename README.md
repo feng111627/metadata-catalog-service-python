@@ -38,14 +38,44 @@
 ## 血缘与影响分析语义
 
 - **登记幂等**：同一条边（含列映射）重复登记返回 `added: false`，图中不会重复。
+- **分批补登（增量合并）**：同一对上下游表在血缘中**始终只有一条边**。列级映射可以
+  分多批登记，服务端按"并集 + 去重"合并；两批补登后查到的是合并后的完整列映射。
+  - 返回值 `added` 精确表达本次是否带来新增：新表对、或批次中含此前没有的映射为
+    `true`；原样重放、或整批都是已有映射时为 `false`，**且不改动任何状态**。
+  - 只对"全新表对"做环检测；向已存在的边追加列映射不可能成环，不会被拒绝。
+- **下线 / 回滚**（`POST /lineage/deregister`）：
+  - 请求体不带 `columns`（或为 `null`）→ **整条撤销**（表级、列级边都适用）；
+  - 带 `columns` 列表 → **只撤销指定的列映射**；列级边的最后一条映射被撤掉后，
+    边本身也消失，不会留下一条没有映射的空边。
+  - **幂等**：撤销本来就不存在的边或映射按成功处理，返回 `removed: false`，不报错误；
+    引用了当前 schema 中已不存在字段的撤销同样视为"本来就没有"的 no-op。
+  - 撤销后血缘查询与影响分析**立即按新状态收敛**，不再带出任何已下线内容。
+  - 撤销后再登记从干净状态开始，**不会翻出此前撤掉的旧映射**。
+  - 每次撤销（含幂等 no-op 与被拒绝请求）都写审计：actor、时间、目标、范围与结果。
+  - 删边/删映射只会让图变小，**不可能制造环或不合法状态**。
+- **原子性（all-or-nothing）**：一次补登或撤销在单临界区内完成；若批次中任何一部分
+  不合法（如引用不存在的字段、结构错误），整体拒绝，**不会只写入/删掉一半**，失败前后
+  已有数据完全一致。
+- **并发可预期**：多人同时给同一对表补登/撤销，在同一把锁内串行化——有效内容不丢失、
+  不出现重复映射、每对表始终一条边；对互不相交映射的并发增删满足交换律，最终状态确定。
 - **环检测**：加边前检查是否成环（含自环与间接环），成环则以 `CYCLE_DETECTED`
   （HTTP 409）拒绝并在消息中给出环路径；环检测与写边在同一临界区，拒绝后图不变。
-- **查询确定性**：血缘查询与影响分析结果按固定规则排序（实体 id、深度），多次查询结论一致。
+- **查询确定性**：血缘查询与影响分析结果按固定规则排序（实体 id、深度、列名），多次查询结论一致。
 - **影响分析**（`POST /entities/{id}/impact`）：从源实体沿下游 BFS，返回每个受影响实体的
   `depth`（1 = 直接下游）与受影响列。指定 `columns` 时仅沿匹配的列映射传播，
   映射链中断处不再向下传播；不指定时按整表影响处理。
 - **审计**：每次变更尝试（含被拒绝的）与影响分析都会记录 actor、时间、目标与结论，
   `GET /audit` 仅 admin 可读。
+
+### 与原有行为的兼容范围
+
+- `POST /lineage` 的请求体与 `added: bool` 返回结构**保持不变**；变化仅是存储语义：
+  同一对表的多次登记从"多条边"收敛为"一条边 + 合并后的列映射"。旧调用方（只登记一次、
+  或原样重放）行为完全一致：首次 `true`、重放 `false`。
+- 先登记表级血缘（不带 `columns`）、后补列映射的用法现在也会合并到同一条边（此前会留下
+  两条边）；这属于对既有歧义行为的修正。
+- 下线能力通过**新端点** `POST /lineage/deregister` 提供，不改动任何既有端点；成功返回
+  200 与 `{"removed": bool}`，不存在 404（撤销缺失内容是幂等成功）。
 
 ## 权限模型
 
@@ -63,16 +93,22 @@ uv run pytest           # 运行全部测试（-v 已内置，日志按业务域
 uv run python main.py   # 启动服务，默认 127.0.0.1:8000
 ```
 
+最近一次完整运行日志保存在 `logs/pytest-latest.log`，其中逐用例列出业务、用例名与
+PASSED/FAILED 结果。
+
 测试按业务域组织，日志可直接看出覆盖面：
 
 | 测试文件 | 覆盖业务 |
 | --- | --- |
 | `tests/test_schema_compatibility.py` | 兼容演进接受、四类不兼容拒绝原因、非法输入拒绝、拒绝后无部分写入 |
 | `tests/test_lineage.py` | 表级/列级血缘幂等、直接/间接/自环拒绝、列映射校验、查询确定性 |
+| `tests/test_lineage_incremental.py` | 分批补登合并去重、始终一条边、`added` 区分有无新增、坏批次整体不生效、表级→列级合并、排序确定性 |
+| `tests/test_lineage_deregister.py` | 整条/按列撤销、幂等 no-op、最后映射撤掉边消失、影响分析立即收敛、干净重登、撤销审计留痕、坏请求不改状态 |
+| `tests/test_lineage_concurrency.py` | 并发分批补登不丢不重、并发增删不相交映射结果确定、并发撤销不丢映射、全撤+重登终态合法、混合压力下图始终合法 |
 | `tests/test_concurrency.py` | 过期 revision 确定性冲突、并发演进唯一胜出、重试不丢更新、并发血缘幂等 |
 | `tests/test_impact.py` | 多层级影响、列级传播与终止、结果确定性、影响分析审计 |
 | `tests/test_auth.py` | namespace 隔离、存在性不泄露、越权写拒绝、影响结果按可见性过滤、审计仅 admin |
-| `tests/test_api.py` | HTTP 状态码映射（400/401/404/409/422）与错误体结构 |
+| `tests/test_api.py` | HTTP 状态码映射（400/401/404/409/422）、错误体结构、分批合并与下线端点（含幂等 200、400） |
 
 ### 手动验证示例
 
@@ -92,6 +128,24 @@ curl -s -X POST localhost:8000/entities/users/schema-versions -H 'X-API-Key: ali
 curl -s -X POST localhost:8000/entities/users/impact -H 'X-API-Key: alice-key' \
   -H 'content-type: application/json' -d '{}'
 
+# 血缘分批补登（同一对表两次提交，合并为一条边；第二次有新映射仍返回 added=true）
+curl -s -X POST localhost:8000/lineage -H 'X-API-Key: alice-key' \
+  -H 'content-type: application/json' \
+  -d '{"upstream_id":"users","downstream_id":"users_vip","columns":[{"upstream":"id","downstream":"uid"}]}'
+curl -s -X POST localhost:8000/lineage -H 'X-API-Key: alice-key' \
+  -H 'content-type: application/json' \
+  -d '{"upstream_id":"users","downstream_id":"users_vip","columns":[{"upstream":"name","downstream":"uname"}]}'
+
+# 只撤销其中一条列映射（重复撤销返回 removed=false，仍为 200）
+curl -s -X POST localhost:8000/lineage/deregister -H 'X-API-Key: alice-key' \
+  -H 'content-type: application/json' \
+  -d '{"upstream_id":"users","downstream_id":"users_vip","columns":[{"upstream":"id","downstream":"uid"}]}'
+
+# 整条撤销（不带 columns）
+curl -s -X POST localhost:8000/lineage/deregister -H 'X-API-Key: alice-key' \
+  -H 'content-type: application/json' \
+  -d '{"upstream_id":"users","downstream_id":"users_vip"}'
+
 # 审计（仅 admin）
 curl -s localhost:8000/audit -H 'X-API-Key: admin-key'
 ```
@@ -103,7 +157,7 @@ app/
   models.py         # 领域模型（实体、schema 版本、血缘边、审计记录）
   errors.py         # 带稳定 reason code 的错误类型
   compatibility.py  # schema 演进兼容规则
-  store.py          # 线程安全内存存储，乐观并发，原子加边
+  store.py          # 线程安全内存存储，乐观并发；血缘按表对键控，原子 merge/remove
   lineage.py        # 环检测与下游影响 BFS
   audit.py          # 追加式审计日志
   auth.py           # API key 鉴权与 namespace 授权

@@ -1,0 +1,100 @@
+warning: `VIRTUAL_ENV=/home/feng/solo/data/claude/.venv` does not match the project environment path `.venv` and will be ignored; use `--active` to target the active environment instead
+============================= test session starts ==============================
+platform linux -- Python 3.14.4, pytest-9.1.1, pluggy-1.6.0 -- /home/feng/solo/data/claude/builds/metadata-catalog-service-python-bootstrap/metadata-catalog-service-python-bootstrap-a/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/feng/solo/data/claude/builds/metadata-catalog-service-python-feature/metadata-catalog-service-python-feature-b
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.15.1
+collecting ... collected 78 items
+
+tests/test_api.py::test_register_and_get_roundtrip PASSED                [  1%]
+tests/test_api.py::test_incompatible_evolution_returns_422_with_reason PASSED [  2%]
+tests/test_api.py::test_revision_conflict_returns_409 PASSED             [  3%]
+tests/test_api.py::test_invalid_input_returns_400 PASSED                 [  5%]
+tests/test_api.py::test_cycle_returns_409_with_path PASSED               [  6%]
+tests/test_api.py::test_lineage_replay_returns_added_false PASSED        [  7%]
+tests/test_api.py::test_batch_lineage_merges_over_http PASSED            [  8%]
+tests/test_api.py::test_deregister_mappings_and_whole_edge_over_http PASSED [ 10%]
+tests/test_api.py::test_deregister_unknown_edge_is_200_idempotent PASSED [ 11%]
+tests/test_api.py::test_deregister_malformed_columns_returns_400 PASSED  [ 12%]
+tests/test_auth.py::test_unauthenticated_requests_rejected PASSED        [ 14%]
+tests/test_auth.py::test_list_entities_scoped_to_own_namespace PASSED    [ 15%]
+tests/test_auth.py::test_cross_namespace_read_indistinguishable_from_missing PASSED [ 16%]
+tests/test_auth.py::test_cross_namespace_write_rejected PASSED           [ 17%]
+tests/test_auth.py::test_cross_namespace_schema_evolution_hidden PASSED  [ 19%]
+tests/test_auth.py::test_cross_namespace_lineage_hidden PASSED           [ 20%]
+tests/test_auth.py::test_impact_results_filtered_by_visibility PASSED    [ 21%]
+tests/test_auth.py::test_audit_log_admin_only PASSED                     [ 23%]
+tests/test_auth.py::test_audit_records_rejections_with_reasons PASSED    [ 24%]
+tests/test_concurrency.py::test_stale_revision_gets_deterministic_conflict PASSED [ 25%]
+tests/test_concurrency.py::test_concurrent_evolutions_exactly_one_wins_per_revision PASSED [ 26%]
+tests/test_concurrency.py::test_concurrent_read_modify_write_with_retry_loses_nothing PASSED [ 28%]
+tests/test_concurrency.py::test_concurrent_lineage_registration_stays_idempotent PASSED [ 29%]
+tests/test_impact.py::test_table_level_impact_gives_all_depths PASSED    [ 30%]
+tests/test_impact.py::test_column_level_impact_propagates_only_mapped_columns PASSED [ 32%]
+tests/test_impact.py::test_column_level_impact_stops_when_mapping_chain_ends PASSED [ 33%]
+tests/test_impact.py::test_impact_on_leaf_is_empty PASSED                [ 34%]
+tests/test_impact.py::test_impact_with_unknown_column_rejected PASSED    [ 35%]
+tests/test_impact.py::test_impact_results_are_deterministic PASSED       [ 37%]
+tests/test_impact.py::test_impact_analysis_is_audited PASSED             [ 38%]
+tests/test_lineage.py::test_table_level_registration_is_idempotent PASSED [ 39%]
+tests/test_lineage.py::test_column_level_registration_is_idempotent PASSED [ 41%]
+tests/test_lineage.py::test_direct_cycle_rejected PASSED                 [ 42%]
+tests/test_lineage.py::test_indirect_cycle_rejected PASSED               [ 43%]
+tests/test_lineage.py::test_self_loop_rejected PASSED                    [ 44%]
+tests/test_lineage.py::test_rejected_cycle_leaves_graph_unchanged PASSED [ 46%]
+tests/test_lineage.py::test_column_mapping_must_reference_existing_columns PASSED [ 47%]
+tests/test_lineage.py::test_lineage_queries_are_deterministic PASSED     [ 48%]
+tests/test_lineage_concurrency.py::test_concurrent_batched_registration_merges_without_loss_or_dups PASSED [ 50%]
+tests/test_lineage_concurrency.py::test_concurrent_register_and_revoke_disjoint_mappings_are_deterministic PASSED [ 51%]
+tests/test_lineage_concurrency.py::test_concurrent_revokes_of_different_mappings_lose_nothing PASSED [ 52%]
+tests/test_lineage_concurrency.py::test_concurrent_full_revoke_and_reregister_end_in_a_legal_state PASSED [ 53%]
+tests/test_lineage_concurrency.py::test_concurrent_mixed_batches_and_revokes_keep_graph_valid PASSED [ 55%]
+tests/test_lineage_deregister.py::test_revoke_whole_edge_disappears_from_queries PASSED [ 56%]
+tests/test_lineage_deregister.py::test_revoke_whole_edge_is_idempotent PASSED [ 57%]
+tests/test_lineage_deregister.py::test_revoke_specific_mappings_keeps_single_edge PASSED [ 58%]
+tests/test_lineage_deregister.py::test_revoke_mapping_is_idempotent_and_reports_no_change PASSED [ 60%]
+tests/test_lineage_deregister.py::test_revoking_last_mapping_removes_the_edge PASSED [ 61%]
+tests/test_lineage_deregister.py::test_impact_analysis_converges_immediately_after_revoke PASSED [ 62%]
+tests/test_lineage_deregister.py::test_revoke_whole_edge_converges_impact_for_remaining_columns PASSED [ 64%]
+tests/test_lineage_deregister.py::test_reregistration_after_full_revoke_starts_clean PASSED [ 65%]
+tests/test_lineage_deregister.py::test_reregister_after_partial_revoke_does_not_resurrect PASSED [ 66%]
+tests/test_lineage_deregister.py::test_revoke_is_audited_with_actor_and_scope PASSED [ 67%]
+tests/test_lineage_deregister.py::test_idempotent_revoke_is_audited_as_noop PASSED [ 69%]
+tests/test_lineage_deregister.py::test_revoke_rejects_malformed_request_without_state_change PASSED [ 70%]
+tests/test_lineage_deregister.py::test_revoke_mapping_referencing_dropped_field_is_idempotent PASSED [ 71%]
+tests/test_lineage_incremental.py::test_batches_merge_into_single_deduplicated_edge PASSED [ 73%]
+tests/test_lineage_incremental.py::test_exact_replay_and_no_new_mappings_change_nothing PASSED [ 74%]
+tests/test_lineage_incremental.py::test_return_value_distinguishes_new_vs_merged_mappings PASSED [ 75%]
+tests/test_lineage_incremental.py::test_failed_batch_is_all_or_nothing PASSED [ 76%]
+tests/test_lineage_incremental.py::test_adding_mappings_to_existing_pair_never_cycle_checks PASSED [ 78%]
+tests/test_lineage_incremental.py::test_table_edge_then_column_batch_merges_into_same_edge PASSED [ 79%]
+tests/test_lineage_incremental.py::test_column_order_in_merged_edge_is_deterministic PASSED [ 80%]
+tests/test_schema_compatibility.py::test_adding_optional_field_is_compatible PASSED [ 82%]
+tests/test_schema_compatibility.py::test_type_widening_is_compatible PASSED [ 83%]
+tests/test_schema_compatibility.py::test_incompatible_changes_rejected_with_distinct_codes[remove-field] PASSED [ 84%]
+tests/test_schema_compatibility.py::test_incompatible_changes_rejected_with_distinct_codes[change-type] PASSED [ 85%]
+tests/test_schema_compatibility.py::test_incompatible_changes_rejected_with_distinct_codes[add-required] PASSED [ 87%]
+tests/test_schema_compatibility.py::test_incompatible_changes_rejected_with_distinct_codes[optional-to-required] PASSED [ 88%]
+tests/test_schema_compatibility.py::test_rejected_evolution_leaves_no_partial_write PASSED [ 89%]
+tests/test_schema_compatibility.py::test_malformed_fields_rejected[empty] PASSED [ 91%]
+tests/test_schema_compatibility.py::test_malformed_fields_rejected[no-name] PASSED [ 92%]
+tests/test_schema_compatibility.py::test_malformed_fields_rejected[no-type] PASSED [ 93%]
+tests/test_schema_compatibility.py::test_malformed_fields_rejected[bad-type] PASSED [ 94%]
+tests/test_schema_compatibility.py::test_malformed_fields_rejected[bad-required] PASSED [ 96%]
+tests/test_schema_compatibility.py::test_malformed_fields_rejected[duplicate] PASSED [ 97%]
+tests/test_schema_compatibility.py::test_malformed_fields_rejected[not-object] PASSED [ 98%]
+tests/test_schema_compatibility.py::test_rejection_is_audited PASSED     [100%]
+
+=============================== warnings summary ===============================
+../../metadata-catalog-service-python-bootstrap/metadata-catalog-service-python-bootstrap-a/.venv/lib/python3.14/site-packages/fastapi/testclient.py:1
+  /home/feng/solo/data/claude/builds/metadata-catalog-service-python-bootstrap/metadata-catalog-service-python-bootstrap-a/.venv/lib/python3.14/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+../../metadata-catalog-service-python-bootstrap/metadata-catalog-service-python-bootstrap-a/.venv/lib/python3.14/site-packages/starlette/testclient.py:53
+  /home/feng/solo/data/claude/builds/metadata-catalog-service-python-bootstrap/metadata-catalog-service-python-bootstrap-a/.venv/lib/python3.14/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 78 passed, 2 warnings in 0.55s ========================
