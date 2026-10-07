@@ -65,3 +65,55 @@ def test_lineage_replay_returns_added_false(client):
     replay = client.post("/lineage", headers=ALICE, json={"upstream_id": "x", "downstream_id": "y"})
     assert first.json()["added"] is True
     assert replay.json()["added"] is False
+
+
+def test_incremental_lineage_batches_merge_into_one_edge(client):
+    _register(client, "x")
+    _register(client, "y")
+    first = client.post("/lineage", headers=ALICE, json={
+        "upstream_id": "x", "downstream_id": "y",
+        "columns": [{"upstream": "id", "downstream": "id"}]})
+    second = client.post("/lineage", headers=ALICE, json={
+        "upstream_id": "x", "downstream_id": "y",
+        "columns": [{"upstream": "id", "downstream": "id"}]})
+    assert first.status_code == 201
+    assert first.json()["added"] is True
+    assert second.status_code == 201  # replay stays a successful call...
+    assert second.json()["added"] is False  # ...that visibly changed nothing
+    lineage = client.get("/entities/y/lineage", headers=ALICE).json()
+    assert len(lineage["upstream"]) == 1
+    assert lineage["upstream"][0]["columns"] == [
+        {"upstream": "id", "downstream": "id"}]
+
+
+def test_revoke_endpoint_partial_full_and_idempotent(client):
+    _register(client, "x")
+    _register(client, "y")
+    client.post("/lineage", headers=ALICE, json={"upstream_id": "x", "downstream_id": "y"})
+
+    # full revoke: first call removes, replay is an idempotent success no-op
+    resp = client.post("/lineage/revoke", headers=ALICE,
+                       json={"upstream_id": "x", "downstream_id": "y"})
+    replay = client.post("/lineage/revoke", headers=ALICE,
+                         json={"upstream_id": "x", "downstream_id": "y"})
+    assert resp.status_code == 200
+    assert resp.json()["removed"] is True
+    assert replay.status_code == 200
+    assert replay.json()["removed"] is False
+    assert client.get("/entities/y/lineage", headers=ALICE).json()["upstream"] == []
+
+
+def test_revoke_unknown_column_returns_400_and_changes_nothing(client):
+    _register(client, "x")
+    _register(client, "y")
+    client.post("/lineage", headers=ALICE, json={
+        "upstream_id": "x", "downstream_id": "y",
+        "columns": [{"upstream": "id", "downstream": "id"}]})
+    resp = client.post("/lineage/revoke", headers=ALICE, json={
+        "upstream_id": "x", "downstream_id": "y",
+        "columns": [{"upstream": "nope", "downstream": "id"}]})
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "INVALID_INPUT"
+    lineage = client.get("/entities/y/lineage", headers=ALICE).json()
+    assert lineage["upstream"][0]["columns"] == [
+        {"upstream": "id", "downstream": "id"}]  # no partial removal

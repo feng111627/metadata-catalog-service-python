@@ -155,25 +155,99 @@ class CatalogService:
         downstream_id: str,
         columns: list[dict] | None = None,
     ) -> bool:
-        """Register a lineage edge. Idempotent; cycles are rejected."""
+        """Incrementally register lineage mappings.
+
+        One endpoint pair is always a single edge: mappings are merged with
+        what is already registered and de-duplicated. Returns True when the
+        call adds at least one new mapping (or creates the edge); an exact
+        replay or a batch with nothing new changes no state and returns
+        False. Cycles are rejected atomically.
+        """
         try:
             upstream = self._visible_entity(actor, upstream_id)
             downstream = self._visible_entity(actor, downstream_id)
             mappings = self._parse_column_mappings(columns or [], upstream, downstream)
-            edge = LineageEdge(upstream_id, downstream_id, mappings)
-            added = self.store.add_edge_guarded(
-                edge, lambda existing: assert_no_cycle(existing, edge)
+            result = self.store.merge_edge_mappings(
+                upstream_id,
+                downstream_id,
+                mappings,
+                lambda existing: assert_no_cycle(
+                    existing, LineageEdge(upstream_id, downstream_id, mappings)
+                ),
             )
         except CatalogError as e:
             self.audit.record(actor.name, "register_lineage", f"{upstream_id}->{downstream_id}", "rejected", f"{e.code}: {e.message}")
             raise
-        outcome = "success" if added else "success (idempotent replay)"
-        self.audit.record(actor.name, "register_lineage", f"{upstream_id}->{downstream_id}", outcome)
-        return added
+        if not result.changed:
+            outcome = "success (idempotent replay)"
+            detail = "added=0"
+        elif result.new_edge:
+            outcome = "success"
+            detail = f"new_edge=true mappings={len(mappings)}"
+        else:
+            assert result.edge is not None
+            detail = f"new_edge=false total_mappings={len(result.edge.columns)}"
+            outcome = "success"
+        self.audit.record(actor.name, "register_lineage", f"{upstream_id}->{downstream_id}", outcome, detail)
+        return result.changed
+
+    def revoke_lineage(
+        self,
+        actor: Principal,
+        upstream_id: str,
+        downstream_id: str,
+        columns: list[dict] | None = None,
+    ) -> bool:
+        """Revoke a whole edge (columns=None) or only some column mappings.
+
+        Idempotent: revoking a missing edge or mappings that are not
+        registered is a successful no-op returning False. The removal is
+        atomic (all-or-nothing) and the graph is re-validated afterwards;
+        lineage queries and impact analysis reflect the change immediately.
+        Re-registering afterwards starts from the clean, current state.
+        """
+        target = f"{upstream_id}->{downstream_id}"
+        try:
+            upstream = self._visible_entity(actor, upstream_id)
+            downstream = self._visible_entity(actor, downstream_id)
+            if columns is None:
+                wanted: frozenset[ColumnMapping] | None = None
+            else:
+                parsed = self._parse_column_mappings(
+                    columns, upstream, downstream, allow_duplicate=True
+                )
+                wanted = frozenset(parsed)
+            result = self.store.remove_edge_mappings(
+                upstream_id, downstream_id, wanted
+            )
+        except CatalogError as e:
+            self.audit.record(actor.name, "revoke_lineage", target, "rejected", f"{e.code}: {e.message}")
+            raise
+        scope = "edge" if columns is None else "columns"
+        if not result.changed:
+            outcome = "success (idempotent no-op)"
+            detail = f"scope={scope} removed=0"
+        else:
+            outcome = "success"
+            remaining = len(result.edge.columns) if result.edge is not None else 0
+            detail = f"scope={scope} edge_removed={result.edge is None} mappings_left={remaining}"
+        self.audit.record(actor.name, "revoke_lineage", target, outcome, detail)
+        return result.changed
 
     def _parse_column_mappings(
-        self, raw: list[dict], upstream: DataEntity, downstream: DataEntity
+        self,
+        raw: list[dict],
+        upstream: DataEntity,
+        downstream: DataEntity,
+        allow_duplicate: bool = False,
     ) -> tuple[ColumnMapping, ...]:
+        """Validate and parse column mappings against current schemas.
+
+        Malformed input and references to non-existent columns are rejected,
+        so a whole batch fails before any state changes. Duplicate pairs
+        inside one request are rejected for registration; revocation treats
+        them as the idempotent same intent and de-duplicates them.
+        """
         if not isinstance(raw, list):
             raise ValidationError("columns must be a list")
         up_cols = {f.name for f in (upstream.current_schema.fields if upstream.current_schema else ())}
@@ -191,7 +265,9 @@ class CatalogService:
             if down not in down_cols:
                 raise ValidationError(f"downstream column {down!r} does not exist on {downstream.entity_id!r}")
             if (up, down) in seen:
-                raise ValidationError(f"duplicate column mapping {up!r}->{down!r}")
+                if not allow_duplicate:
+                    raise ValidationError(f"duplicate column mapping {up!r}->{down!r}")
+                continue
             seen.add((up, down))
             mappings.append(ColumnMapping(up, down))
         return tuple(mappings)

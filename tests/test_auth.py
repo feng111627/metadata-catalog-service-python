@@ -59,6 +59,21 @@ def test_cross_namespace_lineage_hidden(client):
     assert resp.status_code == 404
 
 
+def test_cross_namespace_revoke_hidden_and_changes_nothing(client):
+    _register(client, ALICE, "a1", "analytics")
+    _register(client, ALICE, "a2", "analytics")
+    client.post("/lineage", headers=ALICE,
+                json={"upstream_id": "a1", "downstream_id": "a2"})
+    # bob cannot see a1: revoke is indistinguishable from "not found"...
+    resp = client.post("/lineage/revoke", headers=BOB,
+                       json={"upstream_id": "a1", "downstream_id": "a2"})
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "NOT_FOUND"
+    # ...and the edge alice owns is untouched
+    lineage = client.get("/entities/a2/lineage", headers=ALICE).json()
+    assert [e["upstream_id"] for e in lineage["upstream"]] == ["a1"]
+
+
 def test_impact_results_filtered_by_visibility(client):
     _register(client, ALICE, "src", "analytics")
     _register(client, ALICE, "mid", "analytics")

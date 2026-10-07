@@ -158,6 +158,17 @@ def create_app(service: CatalogService | None = None) -> FastAPI:
         )
         return {"added": added}
 
+    @app.post("/lineage/revoke", status_code=200)
+    def revoke_lineage(
+        body: RegisterLineageRequest,
+        principal: Principal = Depends(get_principal),
+        svc: CatalogService = Depends(get_service),
+    ) -> dict[str, Any]:
+        removed = svc.revoke_lineage(
+            principal, body.upstream_id, body.downstream_id, body.columns
+        )
+        return {"removed": removed}
+
     @app.get("/entities/{entity_id}/lineage")
     def get_lineage(
         entity_id: str,

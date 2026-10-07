@@ -49,6 +49,41 @@ def assert_no_cycle(edges: list[LineageEdge], new_edge: LineageEdge) -> None:
         raise CycleDetectedError(path + [new_edge.downstream_id])
 
 
+def assert_acyclic(edges: list[LineageEdge]) -> None:
+    """Validate the whole graph: no self loops and no directed cycles.
+
+    Used as a post-condition of every lineage mutation, so a revoke can never
+    leave the graph in an invalid state. Raises CycleDetectedError with the
+    offending path.
+    """
+    adj: dict[str, list[str]] = {}
+    for e in edges:
+        if e.upstream_id == e.downstream_id:
+            raise CycleDetectedError([e.upstream_id, e.downstream_id])
+        adj.setdefault(e.upstream_id, []).append(e.downstream_id)
+
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color: dict[str, int] = {}
+    stack: list[str] = []
+
+    def visit(node: str) -> None:
+        color[node] = GRAY
+        stack.append(node)
+        for nxt in sorted(adj.get(node, [])):
+            state = color.get(nxt, WHITE)
+            if state == GRAY:
+                start = stack.index(nxt)
+                raise CycleDetectedError(stack[start:] + [nxt])
+            if state == WHITE:
+                visit(nxt)
+        stack.pop()
+        color[node] = BLACK
+
+    for node in sorted(adj):
+        if color.get(node, WHITE) == WHITE:
+            visit(node)
+
+
 def downstream_impact(
     edges: list[LineageEdge], source_id: str, source_columns: list[str] | None = None
 ) -> list[ImpactedEntity]:
